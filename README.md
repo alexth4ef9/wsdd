@@ -11,6 +11,9 @@ to appear in Windows again using the Web Service Discovery method. This is
 beneficial for devices running Samba, like NAS or file sharing servers on your
 local network.
 
+This is a wsdd version for usage with CTDB, it will run on every cluster member
+and publish the CTDB managed cluster addresses (using the resolved DNS entries).
+
 ## Background
 
 With Windows 10 version 1511, support for SMBv1 and thus NetBIOS device discovery
@@ -53,6 +56,17 @@ different init(1) systems, namely FreeBSD's rc.d, Gentoo's openrc, and systemd
 which is used in most contemporary Linux distros. Those files may be used as
 templates for their actual usage. They are likely to require adjustments to the
 actual distribution/installation where they are to be used.
+
+The systemd unit file is modified for the CTDB cluster. Replace -i/--interface
+option argument with the network interface on that CTDB will assign the network
+addresses. Replace -n/--name option argument with the FQDN of the cluster and
+-d/--domain option argument with the domain name. Disable the service, it is
+managed by CTDB.
+
+51.wsdd.script is a CTDB script, on Debian Buster copy it to `/etc/ctdb/events/legacy`
+and enable it with `ctdb event script enable legacy 51.wsdd`
+
+Disable NetBIOS, NetBIOS Name Service will not work well with a clustered wsdd.
 
 ## Firewall Setup
 
@@ -97,9 +111,9 @@ allowed.
 
  * `-n HOSTNAME`, `--hostname HOSTNAME`
 
-     Override the host name wsdd uses during discovery. By default the machine's
-     host name is used (look at hostname(1)). Only the host name part of a
-     possible FQDN will be used in the default case.
+     Set this to the FQDN of the cluster. The name is used to lookup the IP
+     addresses. Only the host name part of a possible FQDN will be used in
+     the default case.
 
  * `-w WORKGROUP`, `--workgroup WORKGROUP`
 
@@ -107,11 +121,6 @@ allowed.
 	 domain (use the -d/--domain option to override this). With -w/--workgroup
 	 the default workgroup name can be changed. The default work group name is
 	 WORKGROUP.
-
- * `-t`, `--nohttp`
-
-     Do not service http requests of the WSD protocol. This option is intended
-     for debugging purposes where another process may handle the Get messages.
 
  * `-v`, `--verbose`
 
