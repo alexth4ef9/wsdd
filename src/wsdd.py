@@ -157,8 +157,7 @@ namespaces = {
     'wsd': WSD_URI,
     'wsx': 'http://schemas.xmlsoap.org/ws/2004/09/mex',
     'wsdp': WSDP_URI,
-    'pnpx': 'http://schemas.microsoft.com/windows/pnpx/2005/10',
-    'pub': 'http://schemas.microsoft.com/windows/pub/2005/07'
+    'pnpx': 'http://schemas.microsoft.com/windows/pnpx/2005/10'
 }
 
 WSD_MAX_KNOWN_MESSAGES = 10
@@ -173,8 +172,6 @@ WSD_GET = 'http://schemas.xmlsoap.org/ws/2004/09/transfer/Get'
 WSD_GET_RESPONSE = 'http://schemas.xmlsoap.org/ws/2004/09/transfer/GetResponse'
 
 WSD_TYPE_DEVICE = 'wsdp:Device'
-PUB_COMPUTER = 'pub:Computer'
-WSD_TYPE_DEVICE_COMPUTER = '{0} {1}'.format(WSD_TYPE_DEVICE, PUB_COMPUTER)
 
 WSD_MCAST_GRP_V4 = '239.255.255.250'
 WSD_MCAST_GRP_V6 = 'ff02::c'  # link-local
@@ -198,6 +195,7 @@ UDP_UPPER_DELAY = 500
 wsd_known_messages = collections.deque([])
 wsd_message_number = 1
 wsd_instance_id = int(time.time())
+wsd_version = 'N/A'
 send_queue = []
 
 args = None
@@ -212,7 +210,7 @@ def wsd_add_metadata_version(parent):
 
 def wsd_add_types(parent):
     dev_type = ElementTree.SubElement(parent, 'wsd:Types')
-    dev_type.text = WSD_TYPE_DEVICE_COMPUTER
+    dev_type.text = WSD_TYPE_DEVICE
 
 
 def wsd_add_endpoint_reference(parent):
@@ -256,7 +254,7 @@ def wsd_build_message(to_addr, action_str, request_header, response):
             relates_to = ElementTree.SubElement(header, 'wsa:RelatesTo')
             relates_to.text = req_msg_id.text
 
-    seq = ElementTree.SubElement(header, 'wsd:AppSequence', {
+    ElementTree.SubElement(header, 'wsd:AppSequence', {
         'InstanceId': str(wsd_instance_id),
         'SequenceId': uuid.uuid1().urn,
         'MessageNumber': str(wsd_message_number)})
@@ -278,6 +276,7 @@ def wsd_build_message(to_addr, action_str, request_header, response):
 
 # WSD message type handling
 def wsd_handle_probe(probe):
+    types = probe.find('./wsd:Types', namespaces).text
     scopes = probe.find('./wsd:Scopes', namespaces)
 
     if scopes:
@@ -286,12 +285,6 @@ def wsd_handle_probe(probe):
             scopes))
         return None
 
-    types_elem = probe.find('./wsd:Types', namespaces)
-    if types_elem is None:
-        logger.debug('Probe message lacks wsd:Types element. Ignored.')
-        return None
-
-    types = types_elem.text
     if not types == WSD_TYPE_DEVICE:
         logger.debug('unknown discovery type ({0}) during probe'.format(types))
         return None
@@ -327,41 +320,25 @@ def wsd_handle_resolve(resolve, xaddr):
 
 
 def wsd_handle_get():
+    # use only the local part of a possible FQDN
+    hostname = args.hostname.partition('.')[0]
     # see https://msdn.microsoft.com/en-us/library/hh441784.aspx for an example
     metadata = ElementTree.Element('wsx:Metadata')
     section = ElementTree.SubElement(metadata, 'wsx:MetadataSection', {
         'Dialect': WSDP_URI + '/ThisDevice'})
     device = ElementTree.SubElement(section, 'wsdp:ThisDevice')
-    ElementTree.SubElement(device, 'wsdp:FriendlyName').text = (
-            'WSD Device {0}'.format(args.hostname))
-    ElementTree.SubElement(device, 'wsdp:FirmwareVersion').text = '1.0'
+    ElementTree.SubElement(device, 'wsdp:FriendlyName').text = hostname
+    ElementTree.SubElement(device, 'wsdp:FirmwareVersion').text = wsd_version
     ElementTree.SubElement(device, 'wsdp:SerialNumber').text = '1'
 
     section = ElementTree.SubElement(metadata, 'wsx:MetadataSection', {
         'Dialect': WSDP_URI + '/ThisModel'})
     model = ElementTree.SubElement(section, 'wsdp:ThisModel')
-    ElementTree.SubElement(model, 'wsdp:Manufacturer').text = 'wsdd'
-    ElementTree.SubElement(model, 'wsdp:ModelName').text = 'wsdd'
-    ElementTree.SubElement(model, 'pnpx:DeviceCategory').text = 'Computers'
-
-    section = ElementTree.SubElement(metadata, 'wsx:MetadataSection', {
-        'Dialect': WSDP_URI + '/Relationship'})
-    rel = ElementTree.SubElement(section, 'wsdp:Relationship', {
-        'Type': WSDP_URI + '/host'})
-    host = ElementTree.SubElement(rel, 'wsdp:Host')
-    wsd_add_endpoint_reference(host)
-    ElementTree.SubElement(host, 'wsdp:Types').text = PUB_COMPUTER
-    ElementTree.SubElement(host, 'wsdp:ServiceId').text = args.uuid.urn
-    if args.domain:
-        ElementTree.SubElement(host, PUB_COMPUTER).text = (
-                '{0}/Domain:{1}'.format(
-                    args.hostname.upper(),
-                    args.domain))
-    else:
-        ElementTree.SubElement(host, PUB_COMPUTER).text = (
-                '{0}/Workgroup:{1}'.format(
-                    args.hostname.upper(),
-                    args.workgroup.upper()))
+    ElementTree.SubElement(model, 'wsdp:Manufacturer').text = args.manufacturer
+    ElementTree.SubElement(model, 'wsdp:ModelName').text = args.modelname
+    if args.url:
+        ElementTree.SubElement(model, 'wsdp:PresentationUrl').text = args.url
+    ElementTree.SubElement(model, 'pnpx:DeviceCategory').text = 'NetworkInfrastructure'
 
     return metadata
 
@@ -382,7 +359,7 @@ def wsd_is_duplicated_msg(msg_id):
     return False
 
 
-def wsd_handle_message(data, interface, src_address):
+def wsd_handle_message(data, interface):
     """
     handle a WSD message that might be received by a MulticastInterface class
     """
@@ -398,18 +375,8 @@ def wsd_handle_message(data, interface, src_address):
     response = None
     action = header.find('./wsa:Action', namespaces).text
     body = tree.find('./soap:Body', namespaces)
-    _, _, action_method = action.rpartition('/')
 
-    if interface:
-        logger.info('{}:{}({}) - - "{} {} UDP" - -'.format(
-            src_address[0], src_address[1], interface.interface,
-            action_method, msg_id
-        ))
-    else:
-        # http logging is already done by according server
-        logger.debug('processing WSD {} message ({})'.format(
-            action_method, msg_id))
-
+    logger.info('handling WSD {0} type message ({1})'.format(action, msg_id))
     logger.debug('incoming message content is {0}'.format(data))
     if action == WSD_PROBE:
         probe = body.find('./wsd:Probe', namespaces)
@@ -439,7 +406,7 @@ class WSDUdpRequestHandler():
 
     def handle_request(self):
         msg, address = self.interface.recv_socket.recvfrom(WSD_MAX_LEN)
-        msg = wsd_handle_message(msg, self.interface, address)
+        msg = wsd_handle_message(msg, self.interface)
         if msg:
             self.enqueue_datagram(msg, address=address)
 
@@ -447,9 +414,6 @@ class WSDUdpRequestHandler():
         """WS-Discovery, Section 4.1, Hello message"""
         hello = ElementTree.Element('wsd:Hello')
         wsd_add_endpoint_reference(hello)
-        # THINK: Microsoft does not send the transport address here due
-        # to privacy reasons. Could make this optional.
-        wsd_add_xaddr(hello, self.interface.transport_address)
         wsd_add_metadata_version(hello)
 
         msg = wsd_build_message(WSA_DISCOVERY, WSD_HELLO, None, hello)
@@ -504,7 +468,7 @@ class WSDHttpRequestHandler(http.server.BaseHTTPRequestHandler):
         content_length = int(s.headers['Content-Length'])
         body = s.rfile.read(content_length)
 
-        response = wsd_handle_message(body, None, None)
+        response = wsd_handle_message(body, None)
         if response:
             s.send_response(200)
             s.send_header('Content-Type', 'application/soap+xml')
@@ -564,7 +528,7 @@ def sigterm_handler(signum, frame):
 
 
 def parse_args():
-    global args, logger
+    global args, logger, wsd_version
 
     parser = argparse.ArgumentParser()
 
@@ -585,22 +549,22 @@ def parse_args():
         help='increase verbosity',
         action='count', default=0)
     parser.add_argument(
-        '-d', '--domain',
-        help='set domain name (disables workgroup)',
-        default=None)
-    parser.add_argument(
         '-n', '--hostname',
         help='override (NetBIOS) hostname to be used (default hostname)',
         # use only the local part of a possible FQDN
         default=socket.gethostname().partition('.')[0])
     parser.add_argument(
-        '-w', '--workgroup',
-        help='set workgroup name (default WORKGROUP)',
-        default='WORKGROUP')
+        '-p', '--url',
+        help='presentation URL',
+        default=None)
     parser.add_argument(
-        '-t', '--nohttp',
-        help='disable http service (for debugging, e.g.)',
-        action='store_true')
+        '--manufacturer',
+        help='Manufacturer string',
+        default='N/A')
+    parser.add_argument(
+        '--modelname',
+        help='Model name string',
+        default='N/A')
     parser.add_argument(
         '-4', '--ipv4only',
         help='use only IPv4 (default = off)',
@@ -636,7 +600,7 @@ def parse_args():
         logger.warning('no interface given, using all interfaces')
 
     if not args.uuid:
-        args.uuid = uuid.uuid5(uuid.NAMESPACE_DNS, socket.gethostname())
+        args.uuid = uuid.uuid5(uuid.NAMESPACE_DNS, args.hostname)
         logger.info('using pre-defined UUID {0}'.format(str(args.uuid)))
     else:
         args.uuid = uuid.UUID(args.uuid)
@@ -700,13 +664,12 @@ def serve_wsd_requests(addresses):
         udp_srvs.append(udp_srv)
         s.register(interface.recv_socket, selectors.EVENT_READ, udp_srv)
 
-        if not args.nohttp:
-            klass = (
-                http.server.HTTPServer
-                if interface.family == socket.AF_INET
-                else HTTPv6Server)
-            http_srv = klass(interface.listen_address, WSDHttpRequestHandler)
-            s.register(http_srv.fileno(), selectors.EVENT_READ, http_srv)
+        klass = (
+            http.server.HTTPServer
+            if interface.family == socket.AF_INET
+            else HTTPv6Server)
+        http_srv = klass(interface.listen_address, WSDHttpRequestHandler)
+        s.register(http_srv.fileno(), selectors.EVENT_READ, http_srv)
 
     # everything is set up, announce ourself and serve requests
     try:

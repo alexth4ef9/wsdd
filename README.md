@@ -11,6 +11,9 @@ to appear in Windows again using the Web Service Discovery method. This is
 beneficial for devices running Samba, like NAS or file sharing servers on your
 local network.
 
+This is a wsdd version for usage with a device that publish a web interface. Under
+Network it will show up as a Network Infrastructure device.
+
 ## Background
 
 With Windows 10 version 1511, support for SMBv1 and thus NetBIOS device discovery
@@ -89,29 +92,24 @@ allowed.
      modified, e.g. by DHCP. However, if you want wsdd to use a specific UUID
      you can use this option.
 
- * `-d DOMAIN`, `--domain DOMAIN`
+ * `-p URL`, `--url URL`
 
-     Assume that the host running wsdd joined an ADS domain. This will make
-     wsdd report the host being a domain member. It disables workgroup
-     membership reporting.
+     Presentation URL, shown as Device webpage in Windows. Double-click on
+     symbol unter Network will open this URL.
+
+ * `--manufacturer MANUFACTURER`
+
+     Manufacturer string. Default N/A.
+
+ * `--modelname MODELNAME`
+
+     Model name string. Default N/A.
 
  * `-n HOSTNAME`, `--hostname HOSTNAME`
 
      Override the host name wsdd uses during discovery. By default the machine's
      host name is used (look at hostname(1)). Only the host name part of a
      possible FQDN will be used in the default case.
-
- * `-w WORKGROUP`, `--workgroup WORKGROUP`
-
-	 By default wsdd reports the host is a member of a workgroup rather than a
-	 domain (use the -d/--domain option to override this). With -w/--workgroup
-	 the default workgroup name can be changed. The default work group name is
-	 WORKGROUP.
-
- * `-t`, `--nohttp`
-
-     Do not service http requests of the WSD protocol. This option is intended
-     for debugging purposes where another process may handle the Get messages.
 
  * `-v`, `--verbose`
 
@@ -135,17 +133,11 @@ allowed.
 
  * handle traffic on eth0 only, but only with IPv6 addresses
 
-    `wsdd -i eth0 -6`
+    `wsdd -i eth0 -6 -p https://device.example.com/`
 
     or
 
-    `wsdd --interface eth0 --ipv6only`
-
- * set the Workgroup according to smb.conf and be verbose
-
-    `SMB_GROUP=$(grep -i '^\s*workgroup\s*=' smb.conf | cut -f2 -d= | tr -d '[:blank:]')`
-
-    `wsdd -v -w $SMB_GROUP`
+    `wsdd --interface eth0 --ipv6only -p https://device.example.com/`
 
 ## Technical Description
 
